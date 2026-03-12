@@ -1,0 +1,24 @@
+[project]
+name = "Download-Simply-Videos-From-YouTube"
+version = "0.1.0"
+description = "A simple GUI tool for downloading YouTube videos as MP4 or MP3."
+authors = [
+    { name = "Gazi", email = "gazi@example.com" }
+]
+dependencies = [
+    "yt-dlp>=2025.10.14",
+    "ffmpeg-python>=0.2.0",
+    "customtkinter>=5.2.0",
+]
+requires-python = ">=3.9"
+
+[project.scripts]
+simply-videos-gui = "gui:main"
+simply-videos-cli = "download:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
