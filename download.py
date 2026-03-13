@@ -149,7 +149,7 @@ def get_available_formats(url: str) -> None:
         print(f"Error listing formats: {str(error)}")
 
 
-def download_single_video(url: str, output_path: str, thread_id: int = 0, audio_only: bool = False) -> dict:
+def download_single_video(url: str, output_path: str, thread_id: int = 0, audio_only: bool = False, logger=None) -> dict:
     """
     Download a single YouTube video, playlist, or channel with retry mechanism.
 
@@ -158,10 +158,14 @@ def download_single_video(url: str, output_path: str, thread_id: int = 0, audio_
         output_path (str): Directory to save the download
         thread_id (int): Thread identifier for logging
         audio_only (bool): If True, download audio only in MP3 format
-
-    Returns:
-        dict: Result status with success/failure info
+        logger: Optional logger function/object
     """
+    def log(msg):
+        if logger:
+            logger(msg)
+        else:
+            print(msg)
+
     if audio_only:
         format_selector = 'bestaudio/best'
         file_extension = 'mp3'
@@ -170,7 +174,7 @@ def download_single_video(url: str, output_path: str, thread_id: int = 0, audio_
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }]
-        print(f"🎵 [Thread {thread_id}] Audio-only mode: Downloading MP3...")
+        log(f"🎵 [Thread {thread_id}] Audio-only mode: Downloading MP3...")
     else:
         format_selector = (
             'bestvideo[height<=1080]+bestaudio/best[height<=1080]/'
@@ -181,6 +185,19 @@ def download_single_video(url: str, output_path: str, thread_id: int = 0, audio_
             'key': 'FFmpegVideoConvertor',
             'preferedformat': 'mp4',
         }]
+
+    class YDLLogger:
+        def debug(self, msg):
+            if msg.startswith('[debug] '):
+                pass
+            else:
+                self.info(msg)
+        def info(self, msg):
+            log(msg)
+        def warning(self, msg):
+            log(f"⚠️ {msg}")
+        def error(self, msg):
+            log(f"❌ {msg}")
 
     downloader_options = {
         'format': format_selector,
@@ -193,6 +210,7 @@ def download_single_video(url: str, output_path: str, thread_id: int = 0, audio_
         'clean_infojson': True,
         'retries': MAX_RETRIES,
         'fragment_retries': MAX_RETRIES,
+        'logger': YDLLogger(),
         'extractor_args': {
             'youtube': {
                 'player_client': YOUTUBE_PLAYER_CLIENTS,
@@ -211,18 +229,18 @@ def download_single_video(url: str, output_path: str, thread_id: int = 0, audio_
     if content_type == 'playlist':
         downloader_options['outtmpl'] = os.path.join(
             output_path, '%(playlist_title)s', f'%(playlist_index)s-%(title)s.{file_extension}')
-        print(f"📋 [Thread {thread_id}] Detected playlist URL. Downloading entire playlist...")
-        print(f"📁 [Thread {thread_id}] Files will be saved to: {output_path}/[playlist_name]/")
+        log(f"📋 [Thread {thread_id}] Detected playlist URL. Downloading entire playlist...")
+        log(f"📁 [Thread {thread_id}] Files will be saved to: {output_path}/[playlist_name]/")
     elif content_type == 'channel':
         downloader_options['outtmpl'] = os.path.join(
             output_path, '%(uploader)s', f'%(upload_date)s-%(title)s.{file_extension}')
-        print(f"📺 [Thread {thread_id}] Detected channel URL. Downloading entire channel...")
-        print(f"📁 [Thread {thread_id}] Files will be saved to: {output_path}/[channel_name]/")
+        log(f"📺 [Thread {thread_id}] Detected channel URL. Downloading entire channel...")
+        log(f"📁 [Thread {thread_id}] Files will be saved to: {output_path}/[channel_name]/")
     else:
         downloader_options['outtmpl'] = os.path.join(
             output_path, f'%(title)s.{file_extension}')
-        print(f"🎥 [Thread {thread_id}] Detected single video URL. Downloading {'audio' if audio_only else 'video'}...")
-        print(f"📁 [Thread {thread_id}] File will be saved to: {output_path}/")
+        log(f"🎥 [Thread {thread_id}] Detected single video URL. Downloading {'audio' if audio_only else 'video'}...")
+        log(f"📁 [Thread {thread_id}] File will be saved to: {output_path}/")
 
     last_exception = None
     for attempt in range(1, MAX_RETRIES + 1):
@@ -241,7 +259,7 @@ def download_single_video(url: str, output_path: str, thread_id: int = 0, audio_
                 if download_result.get('_type') == 'playlist':
                     title = download_result.get('title', 'Unknown Playlist')
                     video_count = len(download_result.get('entries', []))
-                    print(f"📋 [Thread {thread_id}] {content_type.title()}: '{title}' ({video_count} videos)")
+                    log(f"📋 [Thread {thread_id}] {content_type.title()}: '{title}' ({video_count} videos)")
 
                     if video_count == 0:
                         return {
@@ -271,7 +289,7 @@ def download_single_video(url: str, output_path: str, thread_id: int = 0, audio_
             if attempt < MAX_RETRIES:
                 retry_delay = RETRY_DELAY * (2 ** (attempt - 1))
                 error_msg = f"⚠️  [Thread {thread_id}] Attempt {attempt}/{MAX_RETRIES} failed: {str(error)[:100]}. Retrying in {retry_delay}s..."
-                print(error_msg)
+                log(error_msg)
                 time.sleep(retry_delay)
             else:
                 return {
@@ -291,7 +309,7 @@ def download_single_video(url: str, output_path: str, thread_id: int = 0, audio_
 
 def download_youtube_content(urls: List[str], output_path: Optional[str] = None,
                              list_formats: bool = False, max_workers: int = DEFAULT_CONCURRENT_WORKERS, 
-                             audio_only: bool = False) -> None:
+                             audio_only: bool = False, logger=None) -> None:
     """
     Download YouTube content (single videos, playlists, or channels) in MP4 format or MP3 audio only.
     Supports multiple URLs for simultaneous downloading with optimized concurrency.
@@ -302,21 +320,27 @@ def download_youtube_content(urls: List[str], output_path: Optional[str] = None,
         list_formats (bool): If True, only list available formats without downloading
         max_workers (int): Maximum number of concurrent downloads (1-5, default=3)
         audio_only (bool): If True, download audio only in MP3 format
+        logger: Optional logger function/object
     """
+    def log(msg):
+        if logger:
+            logger(msg)
+        else:
+            print(msg)
+
     if output_path is None:
         output_path = os.path.join(os.getcwd(), 'downloads')
 
     if list_formats:
-        print("Available formats for the first provided URL:")
+        log("Available formats for the first provided URL:")
         get_available_formats(urls[0])
         return
 
     os.makedirs(output_path, exist_ok=True)
 
-    print(
-        f"\n🚀 Starting download of {len(urls)} URL(s) with {max_workers} concurrent workers...")
-    print(f"📁 Output directory: {output_path}")
-    print(f"🎧 Format: {'MP3 Audio Only' if audio_only else 'MP4 Video'}")
+    log(f"\n🚀 Starting download of {len(urls)} URL(s) with {max_workers} concurrent workers...")
+    log(f"📁 Output directory: {output_path}")
+    log(f"🎧 Format: {'MP3 Audio Only' if audio_only else 'MP4 Video'}")
 
     playlist_count = sum(
         1 for url in urls if get_content_type(url) == 'playlist')
@@ -333,27 +357,27 @@ def download_youtube_content(urls: List[str], output_path: Optional[str] = None,
         content_summary.append(f"{video_count} video(s)")
 
     if content_summary:
-        print(f"📋 Content: {' + '.join(content_summary)}")
+        log(f"📋 Content: {' + '.join(content_summary)}")
     else:
-        print("🎥 Content: Unknown content type")
+        log("🎥 Content: Unknown content type")
 
-    print("-" * 60)
+    log("-" * 60)
 
     results = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_url = {
-            executor.submit(download_single_video, url, output_path, i+1, audio_only): url
+            executor.submit(download_single_video, url, output_path, i+1, audio_only, logger): url
             for i, url in enumerate(urls)
         }
 
         for future in as_completed(future_to_url):
             result = future.result()
             results.append(result)
-            print(result['message'])
+            log(result['message'])
 
-    print("\n" + "=" * 60)
-    print("📊 DOWNLOAD SUMMARY")
-    print("=" * 60)
+    log("\n" + "=" * 60)
+    log("📊 DOWNLOAD SUMMARY")
+    log("=" * 60)
 
     successful_downloads = [r for r in results if r['success']]
     failed_downloads = [r for r in results if not r['success']]
@@ -361,17 +385,17 @@ def download_youtube_content(urls: List[str], output_path: Optional[str] = None,
     total_successful_count = sum(r.get('count', 1) for r in successful_downloads)
     total_failed_count = sum(r.get('count', 1) for r in failed_downloads)
 
-    print(f"✅ Successful downloads: {total_successful_count} {'files' if total_successful_count != 1 else 'file'}")
-    print(f"❌ Failed downloads: {total_failed_count} {'files' if total_failed_count != 1 else 'file'}")
+    log(f"✅ Successful downloads: {total_successful_count} {'files' if total_successful_count != 1 else 'file'}")
+    log(f"❌ Failed downloads: {total_failed_count} {'files' if total_failed_count != 1 else 'file'}")
 
     if failed_downloads:
-        print("\n❌ Failed URLs:")
+        log("\n❌ Failed URLs:")
         for result in failed_downloads:
-            print(f"   • {result['url']}")
-            print(f"     Reason: {result['message']}")
+            log(f"   • {result['url']}")
+            log(f"     Reason: {result['message']}")
 
     if successful_downloads:
-        print(f"\n🎉 All files saved to: {output_path}")
+        log(f"\n🎉 All files saved to: {output_path}")
 
 
 if __name__ == "__main__":
